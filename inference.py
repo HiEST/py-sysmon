@@ -89,8 +89,6 @@ def main():
             '{} is not a valid directory nor xml file.'.format(args.model)
         )
 
-    print('models type: {}'.format(type(models)))
-
     if args.precision is None:
         args.precision = "fp32*"
 
