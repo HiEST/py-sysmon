@@ -42,7 +42,7 @@ def main():
     parser.add_argument(
         "-o", "--output",
         help="Path to output directory file where results are stored.",
-        default="./",
+        default="./results/",
         type=str
     )
     parser.add_argument(
@@ -63,6 +63,12 @@ def main():
         type=str,
         default=None
     )
+    parser.add_argument(
+        "--source",
+        help="File with environment variables to 'source'.",
+        type=str,
+        default="/opt/intel/openvino/bin/setupvars.sh"
+    )
     
     args = parser.parse_args()
 
@@ -82,15 +88,21 @@ def main():
             '{} is not a valid directory nor xml file.'.format(args.model)
         )
 
+    if args.precision is None:
+        args.precision = "fp32*"
+
+    # exec(open(args.source).read())
+    subprocess.Popen('source {}'.format(args.source), shell=True)
     ld_path = Path(__file__).parent.absolute() / 'bin/lib'
     os.environ['LD_LIBRARY_PATH'] = str(ld_path)
+
+    cpu_count = psutil.cpu_count(logical=False)
 
     if args.config is not None:
         configs = pd.read_csv(args.config)
     else:
-        configs = []
-
-    cpu_count = psutil.cpu_count(logical=False)
+        default_config = [[cpu_count, 1, 1, 1]]
+        configs = pd.DataFrame(default_config, columns=['cores', 'streams', 'requests', 'batch'])
 
     #System monitors
     cpu_monitor = ResourceMonitor()
@@ -136,7 +148,7 @@ def main():
             rapl_monitor.stop(checkpoint=True)
             pcm_monitor.stop(checkpoint=True)
             
-            stats = [model_name, cores, nstreams, nireq, batch]
+            stats = [model_name, cores, nstreams, nireq, batch, args.precision]
             for line in out.decode('utf-8').split('\n')[-10:]:
                 if not any(metric in line for metric in benchmark_metrics):
                     continue
@@ -147,7 +159,7 @@ def main():
 
             benchmark_stats.append(stats)
             
-    benchmark_metrics = ['Model', 'CPUs', 'streams', 'requests', 'batch_size'] + benchmark_metrics
+    benchmark_metrics = ['Model', 'CPUs', 'streams', 'requests', 'batch_size', 'precision'] + benchmark_metrics
     df = pd.DataFrame(benchmark_stats, columns=benchmark_metrics)
 
     if args.preffix:
