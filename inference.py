@@ -127,7 +127,7 @@ def main():
                 if not isinstance(cores, int):
                     cores = cpu_count
                 if not isinstance(nstreams, int):
-                    nstreams = 1
+                    nstreams = cpu_count
                 if not isinstance(nireq, int):
                     nireq = nstreams
                 if not isinstance(batch, int):
