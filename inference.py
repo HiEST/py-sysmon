@@ -10,6 +10,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 
 from utils.monitors import ResourceMonitor, RAPLMonitor, PCMMonitor
 
@@ -77,7 +78,7 @@ def main():
             raise ValueError('{} does not exist.'.format(args.model))
         models = [Path(args.model)]
     elif os.path.isdir(args.model):
-        models = Path(args.model).rglob('*.xml')
+        models = [ path for path in Path(args.model).rglob('*.xml')]
         if args.precision:
             models = [
                 model for model in models 
@@ -87,6 +88,8 @@ def main():
         raise ValueError(
             '{} is not a valid directory nor xml file.'.format(args.model)
         )
+
+    print('models type: {}'.format(type(models)))
 
     if args.precision is None:
         args.precision = "fp32*"
@@ -112,53 +115,63 @@ def main():
     proc = psutil.Process()
     benchmark_stats = []
     benchmark_metrics = ['Count', 'Duration', 'Latency', 'Throughput']
-    for model in models:
-        model_name = model.stem
-        for _, cores, nstreams, nireq, batch in configs.itertuples():
-            if not isinstance(cores, int):
-                cores = cpu_count
-            if not isinstance(nstreams, int):
-                nstreams = 1
-            if not isinstance(nireq, int):
-                nireq = nstreams
-            if not isinstance(batch, int):
-                batch = 1
 
-            proc.cpu_affinity(list(np.arange(0, cores)))
+    configs_per_model = len(configs)
+    total_runs = len(models) * configs_per_model
+    
 
-            pcm_monitor.start(interval=1.0)
-            cpu_monitor.start(interval=1.0)
-            rapl_monitor.start(interval=1.0)
+    with tqdm(total=total_runs, desc="Total runs") as pbar:
+        for model in tqdm(models, desc='Models to run', total=len(models)):
+            model_name = model.stem
+            for _, cores, nstreams, nireq, batch in tqdm(configs.itertuples(), desc='Runs with {}'.format(model_name), total=configs_per_model, leave=False):
+                if not isinstance(cores, int):
+                    cores = cpu_count
+                if not isinstance(nstreams, int):
+                    nstreams = 1
+                if not isinstance(nireq, int):
+                    nireq = nstreams
+                if not isinstance(batch, int):
+                    batch = 1
 
-            subproc = subprocess.Popen(
-                [args.bin, 
-                '-m', str(model),
-                '-d', args.device,
-                '-nstreams', str(nstreams),
-                '-nireq', str(nireq),
-                '-b', str(batch),
-                '-t', str(args.t)],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
-            )
+                proc.cpu_affinity(list(np.arange(0, cores)))
 
-            out, err = subproc.communicate()
+                pcm_monitor.start(interval=1.0)
+                cpu_monitor.start(interval=1.0)
+                rapl_monitor.start(interval=1.0)
 
-            cpu_monitor.stop(checkpoint=True)
-            rapl_monitor.stop(checkpoint=True)
-            pcm_monitor.stop(checkpoint=True)
-            
-            stats = [model_name, cores, nstreams, nireq, batch, args.precision]
-            for line in out.decode('utf-8').split('\n')[-10:]:
-                if not any(metric in line for metric in benchmark_metrics):
-                    continue
+                subproc = subprocess.Popen(
+                    [args.bin, 
+                    '-m', str(model),
+                    '-d', args.device,
+                    '-nstreams', str(nstreams),
+                    '-nireq', str(nireq),
+                    '-b', str(batch),
+                    '-t', str(args.t)],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
 
-                metric, value = line.split(':')
-                stats.append(float(value.strip().split(' ')[0]))
+                out, err = subproc.communicate()
+
+                cpu_monitor.stop(checkpoint=True)
+                rapl_monitor.stop(checkpoint=True)
+                pcm_monitor.stop(checkpoint=True)
+                
+                stats = [model_name, cores, nstreams, nireq, batch, args.precision]
+                for line in out.decode('utf-8').split('\n')[-10:]:
+                    if not any(metric in line for metric in benchmark_metrics):
+                        continue
+
+                    metric, value = line.split(':')
+                    stats.append(float(value.strip().split(' ')[0]))
 
 
-            benchmark_stats.append(stats)
-            
+                benchmark_stats.append(stats)
+
+                # print(j)
+                # progress = i*configs_per_model + j
+                pbar.update(1)
+                
     benchmark_metrics = ['Model', 'CPUs', 'streams', 'requests', 'batch_size', 'precision'] + benchmark_metrics
     df = pd.DataFrame(benchmark_stats, columns=benchmark_metrics)
 
