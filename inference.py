@@ -180,9 +180,9 @@ def main():
     else:
         output_file = args.output + '/'
     
-    df.to_csv('{}summary.csv'.format(output_file), sep=',', index=False)
+    df.to_csv('{}summary.csv'.format(output_file), sep=',', index=False, float_format='%.3f')
     df = pd.concat([df, cpu_monitor.checkpoints, rapl_monitor.checkpoints, pcm_monitor.checkpoints], axis=1, sort=False)
-    df.to_csv('{}detailed.csv'.format(output_file), sep=',', index=False)
+    df.to_csv('{}detailed.csv'.format(output_file), sep=',', index=False, float_format='%.3f')
     
         
 if __name__ == '__main__':
