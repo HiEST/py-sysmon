@@ -47,8 +47,8 @@ def main():
         type=str
     )
     parser.add_argument(
-        "--preffix",
-        help="Preffix to name the different output files generated.",
+        "--prefix",
+        help="Prefix to name the different output files generated.",
         type=str,
         default=None
     )
