@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 
 import subprocess
@@ -19,6 +20,9 @@ from utils.monitors import ResourceMonitor, RAPLMonitor, PCMMonitor
 
 MIN_RUNTIME = 5
 
+class PipelineError(Exception):
+    """Raised when the gst pipeline won't preroll"""
+    pass
 
 def run(cmdline, monitors, timeout=None, retries=5):
     if isinstance(cmdline, str):
@@ -27,10 +31,10 @@ def run(cmdline, monitors, timeout=None, retries=5):
     while retries > 0:
         try:
             for monitor in monitors:
-                monitor.start()
+                monitor.start(interval=1.0)
 
             subproc = subprocess.Popen(
-                shlex.split(gst_throughput),
+                cmdline,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE
             )
@@ -38,20 +42,21 @@ def run(cmdline, monitors, timeout=None, retries=5):
             out, err = subproc.communicate(timeout=timeout)
             out = out.decode('utf-8')
             err = err.decode('utf-8')
+
             if 'ERROR' not in err:
                 for monitor in monitors:
                     monitor.stop(checkpoint=True)
                 return out, err
 
         except:
-            pass
+            raise
         
         for monitor in monitors:
             monitor.stop(checkpoint=False)
         retries = retries - 1
 
     # if we reach this point, retries = 0
-    raise Exception("Command failed all retries: {}".format(shlex.quote(cmdline)))
+    raise PipelineError("Command failed all retries: {}".format(' '.join(cmdline)))
 
 def main():
     parser = argparse.ArgumentParser()
@@ -127,6 +132,7 @@ def main():
         inputs = [Path(args.input)]
     elif os.path.isdir(args.input):
         inputs = [video for video in Path(args.input).glob('*.mp4')]
+        inputs.extend([video for video in Path(args.input).glob('*.webm')])
     else:
         raise ValueError(
             '{} is not a valid directory nor video file.'.format(args.input)
@@ -149,7 +155,7 @@ def main():
     proc = psutil.Process()
     benchmark_stats = []
     benchmark_metrics = ['Video', 'CPUs', 'Procs', 'Device', 'Sync', 'Codec', 'Bitrate', 'Resolution', 'Throughput']
-    benchmark_metrics += ['Latency Avg', 'Latency Max', 'Latency Min', 'Latency 95%', 'Latency 99%', 'Latency Median']
+    benchmark_metrics += ['Latency Avg', 'Latency Max', 'Latency Min', 'Latency 95%', 'Latency 99%', 'Latency Median', 'Latency StdDev']
 
     configs_per_video = len(configs)
     if not args.no_latency:
@@ -198,19 +204,23 @@ def main():
 
                 # 1. First run to get throughput and telemetry
                 try:
-                    out, err = run(gst_throughput, monitors=monitors, timeout=args.time)
+                    out, err = run(gst_throughput, monitors, timeout=args.time)
+                except PipelineError as e:
+                    logging.warning('Skipping experiment with video {} and {} procs with {} cpus'.format(video_name, procs, cores))
+                    continue
                 except:
                     # Save work
                     logging.error("Benchmark failed with pipeline: {}".format(gst_latency))
                     logging.error("Saving current work...")
                     df = pd.DataFrame(benchmark_stats, columns=benchmark_metrics)
-                    df.to_csv('{}summary.csv'.format(output_file), sep=',', index=False, float_format='%.3f')
+                    df.to_csv('{}summary.csv.bak'.format(output_file), sep=',', index=False, float_format='%.3f')
                     df = pd.concat([df, cpu_monitor.checkpoints, rapl_monitor.checkpoints, pcm_monitor.checkpoints], axis=1, sort=False)
-                    df.to_csv('{}detailed.csv'.format(output_file), sep=',', index=False, float_format='%.3f')
-                    raise SystemExit('Exiting benchmark')
+                    df.to_csv('{}detailed.csv.bak'.format(output_file), sep=',', index=False, float_format='%.3f')
+                    raise
+                    # raise SystemExit('Exiting benchmark')
 
                 runtime = None
-                for line in out.decode('utf-8').split('\n')[-10:]:
+                for line in out.split('\n')[-10:]:
                     if 'Execution ended after' in line:
                         runtime = line.split(' ')[-1]
                         hours, minutes, seconds = runtime.split(':')
@@ -227,15 +237,16 @@ def main():
 
                     os.environ['GST_DEBUG'] = 'markout:5'
                     try:
-                        out, err = run(gst_latency, monitors=monitors, timeout=args.time)
+                        out, err = run(gst_latency, monitors, timeout=args.time)
                     except:
                         # Save work
                         logging.error("Benchmark failed with pipeline: {}".format(gst_latency))
                         logging.error("Saving current work...")
                         df = pd.DataFrame(benchmark_stats, columns=benchmark_metrics)
-                        df.to_csv('{}summary.csv'.format(output_file), sep=',', index=False, float_format='%.3f')
+                        df.to_csv('{}summary.csv.bak'.format(output_file), sep=',', index=False, float_format='%.3f')
                         df = pd.concat([df, cpu_monitor.checkpoints, rapl_monitor.checkpoints, pcm_monitor.checkpoints], axis=1, sort=False)
-                        df.to_csv('{}detailed.csv'.format(output_file), sep=',', index=False, float_format='%.3f')
+                        df.to_csv('{}detailed.csv.bak'.format(output_file), sep=',', index=False, float_format='%.3f')
+                        raise
                         raise SystemExit('Exiting benchmark')
 
                     del os.environ['GST_DEBUG']
@@ -254,7 +265,8 @@ def main():
                         lat.max(),
                         np.percentile(lat, 95),
                         np.percentile(lat, 99),
-                        np.median(lat)
+                        np.median(lat),
+                        np.std(lat)
                     ]
                 else:
                     latency_stats = [0, 0, 0, 0, 0, 0]
