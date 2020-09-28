@@ -153,29 +153,49 @@ def main():
 
                 proc.cpu_affinity(list(np.arange(0, cores)))
 
-                pcm_monitor.start(interval=1.0)
-                cpu_monitor.start(interval=1.0)
-                rapl_monitor.start(interval=1.0)
+                retries = 5
+                while retries > 0:
+                    pcm_monitor.start(interval=1.0)
+                    cpu_monitor.start(interval=1.0)
+                    rapl_monitor.start(interval=1.0)
 
-                # 1. First run to get throughput and telemetry
-                t0 = time.time()
-                subproc = subprocess.Popen(
-                    shlex.split(gst_throughput),
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE
-                )
+                    # 1. First run to get throughput and telemetry
+                    t0 = time.time()
+                    subproc = subprocess.Popen(
+                        shlex.split(gst_throughput),
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE
+                    )
 
-                # If synchronous decoding, gst has to finish or we won't be able to get performance metrics
-                timeout = None
-                if args.time is not None:
-                    timeout = args.time
+                    # If synchronous decoding, gst has to finish or we won't be able to get performance metrics
+                    timeout = None
+                    if args.time is not None:
+                        timeout = args.time
 
-                out, err = subproc.communicate(timeout=timeout)
-                t1 = time.time()
+                    out, err = subproc.communicate(timeout=timeout)
+                    t1 = time.time()
 
-                cpu_monitor.stop(checkpoint=True)
-                rapl_monitor.stop(checkpoint=True)
-                pcm_monitor.stop(checkpoint=True)
+                    if 'ERROR' in err.decode('utf-8'):
+                        print('out: ')
+                        print(out.decode('utf-8'))
+                        print('error: ')
+                        print(err.decode('utf-8'))
+                        print(gst_throughput)
+
+                        cpu_monitor.stop(checkpoint=False)
+                        rapl_monitor.stop(checkpoint=False)
+                        pcm_monitor.stop(checkpoint=False)
+
+                        retries = retries - 1
+                        time.sleep(0.5)
+                        continue
+
+                    else:
+                        cpu_monitor.stop(checkpoint=True)
+                        rapl_monitor.stop(checkpoint=True)
+                        pcm_monitor.stop(checkpoint=True)
+
+                        break
 
                 runtime = None
                 for line in out.decode('utf-8').split('\n')[-10:]:
@@ -199,13 +219,23 @@ def main():
                     pbar.update(1)
 
                     os.environ['GST_DEBUG'] = 'markout:5'
-                    subproc = subprocess.Popen(
-                        shlex.split(gst_latency),
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE
-                    )
-                    out, err = subproc.communicate(timeout=timeout)
-                    err = err.decode('utf-8')
+
+                    retries = 5
+                    while retries > 0:
+                        subproc = subprocess.Popen(
+                            shlex.split(gst_latency),
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE
+                        )
+                        out, err = subproc.communicate(timeout=timeout)
+                        err = err.decode('utf-8')
+
+                        if 'ERROR' in err:
+                            retries = retries - 1
+                            continue
+                        else:
+                            break
+                            
                     frame_latencies = []
                     for line in err.split('\n'):
                         if 'Mark Duration' not in line:
