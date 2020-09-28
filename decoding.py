@@ -108,6 +108,8 @@ def main():
     benchmark_metrics += ['Latency Avg', 'Latency Max', 'Latency Min', 'Latency 95%', 'Latency 99%', 'Latency Median']
 
     configs_per_video = len(configs)
+    if not args.no_latency:
+        configs_per_video = configs_per_video * 2
     total_runs = len(inputs) * configs_per_video
 
     gst_pipeline = 'gst-launch-1.0 {} filesrc location={} ! qtdemux ! {} {}parse ! {} {} ! fakesink sync={}'    
@@ -129,6 +131,8 @@ def main():
             resolution = video_info['streams'][0]['height']
             fr, div = video_info['streams'][0]['avg_frame_rate'].split('/')
             frame_rate = float(fr) / float(div)
+            bitrate = int(video_info['streams'][0]['bit_rate'])
+            # number_frames = int(video_info['streams'][0]['nb_frames'])
 
             if codec == 'hevc':
                 codec = 'h265'
@@ -192,6 +196,8 @@ def main():
 
                 # 2. Second run to only get latency, unless otherwise specified
                 if not args.no_latency:
+                    pbar.update(1)
+
                     os.environ['GST_DEBUG'] = 'markout:5'
                     subproc = subprocess.Popen(
                         shlex.split(gst_latency),
@@ -222,12 +228,12 @@ def main():
                     latency_stats = [0, 0, 0, 0, 0, 0]
 
 
-                stats = [video_name, cores, procs, args.device, args.sync, codec, resolution, decoding_fps ] + latency_stats
+                stats = [video_name, cores, procs, args.device, args.sync, codec, bitrate, resolution, decoding_fps ] + latency_stats
                 benchmark_stats.append(stats)
 
                 pbar.update(1)
                 
-    benchmark_metrics = ['Video', 'CPUs', 'Procs', 'Device', 'Sync', 'Codec', 'Resolution', 'Throughput']
+    benchmark_metrics = ['Video', 'CPUs', 'Procs', 'Device', 'Sync', 'Codec', 'Bitrate', 'Resolution', 'Throughput']
     benchmark_metrics += ['Latency Avg', 'Latency Max', 'Latency Min', 'Latency 95%', 'Latency 99%', 'Latency Median']
     df = pd.DataFrame(benchmark_stats, columns=benchmark_metrics)
 
