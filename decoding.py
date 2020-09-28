@@ -17,6 +17,42 @@ from tqdm import tqdm
 
 from utils.monitors import ResourceMonitor, RAPLMonitor, PCMMonitor
 
+MIN_RUNTIME = 5
+
+
+def run(cmdline, monitors, timeout=None, retries=5):
+    if isinstance(cmdline, str):
+        cmdline = shlex.split(cmdline)
+
+    while retries > 0:
+        try:
+            for monitor in monitors:
+                monitor.start()
+
+            subproc = subprocess.Popen(
+                shlex.split(gst_throughput),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+
+            out, err = subproc.communicate(timeout=timeout)
+            out = out.decode('utf-8')
+            err = err.decode('utf-8')
+            if 'ERROR' not in err:
+                for monitor in monitors:
+                    monitor.stop(checkpoint=True)
+                return out, err
+
+        except:
+            pass
+        
+        for monitor in monitors:
+            monitor.stop(checkpoint=False)
+        retries = retries - 1
+
+    # if we reach this point, retries = 0
+    raise Exception("Command failed all retries: {}".format(shlex.quote(cmdline)))
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -80,6 +116,11 @@ def main():
     args = parser.parse_args()
     logging.basicConfig(format='%(levelname)s:%(message)s', level=logging.DEBUG)
 
+    if args.prefix:
+        output_file = args.output + '/' + args.prefix + '-'
+    else:
+        output_file = args.output + '/'
+
     if '.mp4' in args.input:
         if not os.path.isfile(args.input):
             raise ValueError('{} does not exist.'.format(args.input))
@@ -103,10 +144,11 @@ def main():
     cpu_monitor = ResourceMonitor()
     rapl_monitor = RAPLMonitor()
     pcm_monitor = PCMMonitor()
+    monitors = [cpu_monitor, rapl_monitor, pcm_monitor]
 
     proc = psutil.Process()
     benchmark_stats = []
-    benchmark_metrics = ['Video', 'CPUs', 'Procs', 'Device', 'Sync', 'Codec', 'Resolution', 'Throughput']
+    benchmark_metrics = ['Video', 'CPUs', 'Procs', 'Device', 'Sync', 'Codec', 'Bitrate', 'Resolution', 'Throughput']
     benchmark_metrics += ['Latency Avg', 'Latency Max', 'Latency Min', 'Latency 95%', 'Latency 99%', 'Latency Median']
 
     configs_per_video = len(configs)
@@ -134,7 +176,6 @@ def main():
             fr, div = video_info['streams'][0]['avg_frame_rate'].split('/')
             frame_rate = float(fr) / float(div)
             bitrate = int(video_info['streams'][0]['bit_rate'])
-            # number_frames = int(video_info['streams'][0]['nb_frames'])
 
             if codec == 'hevc':
                 codec = 'h265'
@@ -155,50 +196,18 @@ def main():
 
                 proc.cpu_affinity(list(np.arange(0, cores)))
 
-                retries = 5
-                while retries > 0:
-                    pcm_monitor.start(interval=1.0)
-                    cpu_monitor.start(interval=1.0)
-                    rapl_monitor.start(interval=1.0)
-
-                    # 1. First run to get throughput and telemetry
-                    t0 = time.time()
-                    subproc = subprocess.Popen(
-                        shlex.split(gst_throughput),
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE
-                    )
-
-                    # If synchronous decoding, gst has to finish or we won't be able to get performance metrics
-                    timeout = None
-                    if args.time is not None:
-                        timeout = args.time
-
-                    out, err = subproc.communicate(timeout=timeout)
-                    t1 = time.time()
-
-                    if 'ERROR' in err.decode('utf-8'):
-                        print('out: ')
-                        print(out.decode('utf-8'))
-                        print('error: ')
-                        print(err.decode('utf-8'))
-                        print(gst_throughput)
-
-                        cpu_monitor.stop(checkpoint=False)
-                        rapl_monitor.stop(checkpoint=False)
-                        pcm_monitor.stop(checkpoint=False)
-
-                        retries = retries - 1
-                        logging.warning("Error in gst. Retrying one more time. Retries left: {}".format(retries))
-                        time.sleep(0.5)
-                        continue
-
-                    else:
-                        cpu_monitor.stop(checkpoint=True)
-                        rapl_monitor.stop(checkpoint=True)
-                        pcm_monitor.stop(checkpoint=True)
-
-                        break
+                # 1. First run to get throughput and telemetry
+                try:
+                    out, err = run(gst_throughput, monitors=monitors, timeout=args.time)
+                except:
+                    # Save work
+                    logging.error("Benchmark failed with pipeline: {}".format(gst_latency))
+                    logging.error("Saving current work...")
+                    df = pd.DataFrame(benchmark_stats, columns=benchmark_metrics)
+                    df.to_csv('{}summary.csv'.format(output_file), sep=',', index=False, float_format='%.3f')
+                    df = pd.concat([df, cpu_monitor.checkpoints, rapl_monitor.checkpoints, pcm_monitor.checkpoints], axis=1, sort=False)
+                    df.to_csv('{}detailed.csv'.format(output_file), sep=',', index=False, float_format='%.3f')
+                    raise SystemExit('Exiting benchmark')
 
                 runtime = None
                 for line in out.decode('utf-8').split('\n')[-10:]:
@@ -206,17 +215,10 @@ def main():
                         runtime = line.split(' ')[-1]
                         hours, minutes, seconds = runtime.split(':')
                         runtime = int(hours)*3600 + int(minutes)*60 + float(seconds)
-                
-                if runtime is None:
-                    print('out: ')
-                    print(out.decode('utf-8'))
-                    print('error: ')
-                    print(err.decode('utf-8'))
-                    print(gst_throughput)
                     
                 relative_speed = float(video_info['streams'][0]['duration']) / runtime
                 decoding_fps = frame_rate * relative_speed
-                if runtime < 5:
+                if runtime < MIN_RUNTIME:
                     logging.warning("Runtime is too low for meaningful telemetry (runtime: {})".format(runtime))
 
                 # 2. Second run to only get latency, unless otherwise specified
@@ -224,32 +226,26 @@ def main():
                     pbar.update(1)
 
                     os.environ['GST_DEBUG'] = 'markout:5'
+                    try:
+                        out, err = run(gst_latency, monitors=monitors, timeout=args.time)
+                    except:
+                        # Save work
+                        logging.error("Benchmark failed with pipeline: {}".format(gst_latency))
+                        logging.error("Saving current work...")
+                        df = pd.DataFrame(benchmark_stats, columns=benchmark_metrics)
+                        df.to_csv('{}summary.csv'.format(output_file), sep=',', index=False, float_format='%.3f')
+                        df = pd.concat([df, cpu_monitor.checkpoints, rapl_monitor.checkpoints, pcm_monitor.checkpoints], axis=1, sort=False)
+                        df.to_csv('{}detailed.csv'.format(output_file), sep=',', index=False, float_format='%.3f')
+                        raise SystemExit('Exiting benchmark')
 
-                    retries = 5
-                    while retries > 0:
-                        subproc = subprocess.Popen(
-                            shlex.split(gst_latency),
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE
-                        )
-                        out, err = subproc.communicate(timeout=timeout)
-                        err = err.decode('utf-8')
+                    del os.environ['GST_DEBUG']
 
-                        if 'ERROR' in err:
-                            retries = retries - 1
-                            logging.warning("Error in gst. Retrying one more time. Retries left: {}".format(retries))
-                            continue
-                        else:
-                            break
-                            
                     frame_latencies = []
                     for line in err.split('\n'):
                         if 'Mark Duration' not in line:
                             continue
                         duration = float(line.split(':')[-1].strip().replace('ms',''))
                         frame_latencies.append(duration)
-
-                    del os.environ['GST_DEBUG']
                 
                     lat = np.array(frame_latencies)
                     latency_stats = [
@@ -269,14 +265,7 @@ def main():
 
                 pbar.update(1)
                 
-    benchmark_metrics = ['Video', 'CPUs', 'Procs', 'Device', 'Sync', 'Codec', 'Bitrate', 'Resolution', 'Throughput']
-    benchmark_metrics += ['Latency Avg', 'Latency Max', 'Latency Min', 'Latency 95%', 'Latency 99%', 'Latency Median']
     df = pd.DataFrame(benchmark_stats, columns=benchmark_metrics)
-
-    if args.prefix:
-        output_file = args.output + '/' + args.prefix + '-'
-    else:
-        output_file = args.output + '/'
     
     df.to_csv('{}summary.csv'.format(output_file), sep=',', index=False, float_format='%.3f')
     df = pd.concat([df, cpu_monitor.checkpoints, rapl_monitor.checkpoints, pcm_monitor.checkpoints], axis=1, sort=False)
