@@ -1,2 +1,7 @@
-cores,procs,sync,dev
-1,6,1,gpu
+cores,procs
+1,
+2,
+3,
+4,
+5,
+6,

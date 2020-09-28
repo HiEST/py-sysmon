@@ -51,7 +51,7 @@ def main():
         "-t", "--time",
         help="Duration of each experiment.",
         type=int,
-        default=60
+        default=None
     )
     parser.add_argument(
         "-i", "--input", 
@@ -66,14 +66,12 @@ def main():
     parser.add_argument(
         "--sync", 
         help="Synchronous decoding (decoding rate locked at input's framerate).",
-        type=bool,
         default=False,
         action='store_true'
     )
     parser.add_argument(
         "--no-latency", 
         help="Skip the second run to get latency.",
-        type=bool,
         default=False,
         action='store_true'
     )
@@ -85,7 +83,7 @@ def main():
             raise ValueError('{} does not exist.'.format(args.input))
         inputs = [Path(args.input)]
     elif os.path.isdir(args.input):
-        inputs = [ path for path in Path(args.input).rglob('*.mp4')]
+        inputs = [video for video in Path(args.input).glob('*.mp4')]
     else:
         raise ValueError(
             '{} is not a valid directory nor video file.'.format(args.input)
@@ -96,8 +94,8 @@ def main():
     if args.config is not None:
         configs = pd.read_csv(args.config)
     else:
-        default_config = [[cpu_count, 1, True, 'cpu']]
-        configs = pd.DataFrame(default_config, columns=['cores', 'streams', 'requests', 'batch'])
+        default_config = [[cpu_count, 1]]
+        configs = pd.DataFrame(default_config, columns=['cores', 'procs'])
 
     #System monitors
     cpu_monitor = ResourceMonitor()
@@ -119,26 +117,6 @@ def main():
         for video in tqdm(inputs, desc='Videos to decode', total=len(inputs)):
             video_name = video.stem
 
-            # TODO: Remove this as it is too specific to my setup
-            if 'short' in video_name and not args.sync:
-                continue
-            elif 'short' not in video_name and args.sync:
-                continue
-
-            codec, resolution, _ = video_name.split('-')
-            if codec == 'hevc':
-                codec = 'h265'
-            elif codec == 'avc1':
-                codec = 'h264'
-
-            if args.dev == 'cpu':
-                decoder = f'avdec_{codec}'
-            else:
-                decoder = f'vaapi{codec}dec'
-
-            gst_throughput = gst_pipeline.format('', str(video), '', codec, decoder, '', str(args.sync))
-            gst_latency = gst_pipeline.format(f'--gst-plugin-path={args.plugin}', str(video), 'markin name=moo', codec, decoder, '! markout', str(args.sync))
-
             ffproc = subprocess.Popen(
                 shlex.split(ffprobe.format(str(video))),
                 stdout=subprocess.PIPE,
@@ -147,10 +125,26 @@ def main():
             out, err = ffproc.communicate()
             video_info = json.loads(out)
 
+            codec = video_info['streams'][0]['codec_name']
+            resolution = video_info['streams'][0]['height']
+            fr, div = video_info['streams'][0]['avg_frame_rate'].split('/')
+            frame_rate = float(fr) / float(div)
+
+            if codec == 'hevc':
+                codec = 'h265'
+
+            if args.device == 'cpu':
+                decoder = f'avdec_{codec}'
+            else:
+                decoder = f'vaapi{codec}dec'
+
+            gst_throughput = gst_pipeline.format('', str(video), '', codec, decoder, '', str(args.sync))
+            gst_latency = gst_pipeline.format(f'--gst-plugin-path={args.plugin}', str(video), 'markin name=moo !', codec, decoder, '! markout', str(args.sync))
+
             for _, cores, procs in tqdm(configs.itertuples(), desc='Runs with {}'.format(video_name), total=configs_per_video, leave=False):
                 if not isinstance(cores, int):
                     cores = cpu_count
-                if not isinstance(nstreams, int):
+                if not isinstance(procs, int):
                     procs = 1
 
                 proc.cpu_affinity(list(np.arange(0, cores)))
@@ -169,7 +163,7 @@ def main():
 
                 # If synchronous decoding, gst has to finish or we won't be able to get performance metrics
                 timeout = None
-                if not args.sync:
+                if args.time is not None:
                     timeout = args.time
 
                 out, err = subproc.communicate(timeout=timeout)
@@ -179,32 +173,43 @@ def main():
                 rapl_monitor.stop(checkpoint=True)
                 pcm_monitor.stop(checkpoint=True)
 
+                runtime = None
                 for line in out.decode('utf-8').split('\n')[-10:]:
                     if 'Execution ended after' in line:
                         runtime = line.split(' ')[-1]
                         hours, minutes, seconds = runtime.split(':')
                         runtime = int(hours)*3600 + int(minutes)*60 + float(seconds)
+                
+                if runtime is None:
+                    print('out: ')
+                    print(out.decode('utf-8'))
+                    print('error: ')
+                    print(err.decode('utf-8'))
+                    print(gst_throughput)
                     
-                decoding_fps = float(video_info['streams'][0]['duration']) / runtime
+                relative_speed = float(video_info['streams'][0]['duration']) / runtime
+                decoding_fps = frame_rate * relative_speed
 
                 # 2. Second run to only get latency, unless otherwise specified
                 if not args.no_latency:
                     os.environ['GST_DEBUG'] = 'markout:5'
                     subproc = subprocess.Popen(
-                        shlex.split(gst_throughput),
+                        shlex.split(gst_latency),
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE
                     )
-                    out, err = subprocess.communicate(timeout=timeout)
-                    out = out.decode('utf-8')
+                    out, err = subproc.communicate(timeout=timeout)
+                    err = err.decode('utf-8')
                     frame_latencies = []
-                    for line in out.split('\n'):
+                    for line in err.split('\n'):
+                        if 'Mark Duration' not in line:
+                            continue
                         duration = float(line.split(':')[-1].strip().replace('ms',''))
                         frame_latencies.append(duration)
 
                     del os.environ['GST_DEBUG']
                 
-                    lat = np.arra(frame_latencies)
+                    lat = np.array(frame_latencies)
                     latency_stats = [
                         lat.mean(),
                         lat.min(),
@@ -217,7 +222,7 @@ def main():
                     latency_stats = [0, 0, 0, 0, 0, 0]
 
 
-                stats = [video_name, cores, procs, dev, sync, codec, resolution, decoding_fps ] + latency_stats
+                stats = [video_name, cores, procs, args.device, args.sync, codec, resolution, decoding_fps ] + latency_stats
                 benchmark_stats.append(stats)
 
                 pbar.update(1)
@@ -226,8 +231,8 @@ def main():
     benchmark_metrics += ['Latency Avg', 'Latency Max', 'Latency Min', 'Latency 95%', 'Latency 99%', 'Latency Median']
     df = pd.DataFrame(benchmark_stats, columns=benchmark_metrics)
 
-    if args.preffix:
-        output_file = args.output + '/' + args.preffix + '-'
+    if args.prefix:
+        output_file = args.output + '/' + args.prefix + '-'
     else:
         output_file = args.output + '/'
     
