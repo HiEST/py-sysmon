@@ -6,6 +6,7 @@ import argparse
 import glob
 import psutil
 import shlex
+import logging
 
 from pathlib import Path
 
@@ -77,6 +78,7 @@ def main():
     )
     
     args = parser.parse_args()
+    logging.basicConfig(format='%(levelname)s:%(message)s', level=logging.DEBUG)
 
     if '.mp4' in args.input:
         if not os.path.isfile(args.input):
@@ -187,6 +189,7 @@ def main():
                         pcm_monitor.stop(checkpoint=False)
 
                         retries = retries - 1
+                        logging.warning("Error in gst. Retrying one more time. Retries left: {}".format(retries))
                         time.sleep(0.5)
                         continue
 
@@ -213,6 +216,8 @@ def main():
                     
                 relative_speed = float(video_info['streams'][0]['duration']) / runtime
                 decoding_fps = frame_rate * relative_speed
+                if runtime < 5:
+                    logging.warning("Runtime is too low for meaningful telemetry (runtime: {})".format(runtime))
 
                 # 2. Second run to only get latency, unless otherwise specified
                 if not args.no_latency:
@@ -232,6 +237,7 @@ def main():
 
                         if 'ERROR' in err:
                             retries = retries - 1
+                            logging.warning("Error in gst. Retrying one more time. Retries left: {}".format(retries))
                             continue
                         else:
                             break
