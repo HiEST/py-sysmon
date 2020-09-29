@@ -29,12 +29,16 @@ def run(cmdline, cores_per_proc=1, procs=1, monitors=None, timeout=None, environ
     if isinstance(cmdline, str):
         cmdline = shlex.split(cmdline)
 
-    cpusets = []
-    for i in range(procs):
-        cpuid_down = cores_per_proc*i
-        cpuid_up = cores_per_proc*(i+1)
-        proc_cpuset = list(np.arange(cpuid_down, cpuid_up, 1))
-        cpusets.append(proc_cpuset)
+    
+    if cores_per_proc is None: # Don't set cpu affinity
+        cpusets = None
+    else:
+        cpusets = []
+        for i in range(procs):
+            cpuid_down = cores_per_proc*i
+            cpuid_up = cores_per_proc*(i+1)
+            proc_cpuset = list(np.arange(cpuid_down, cpuid_up, 1))
+            cpusets.append(proc_cpuset)
     
     while retries > 0:
         try:
@@ -58,8 +62,9 @@ def run(cmdline, cores_per_proc=1, procs=1, monitors=None, timeout=None, environ
                     del os.environ['GST_DEBUG']
                     environ = None
 
-                proc = psutil.Process(pid=subproc.pid)
-                proc.cpu_affinity(cpusets[i])
+                if cpusets is not None:
+                    proc = psutil.Process(pid=subproc.pid)
+                    proc.cpu_affinity(cpusets[i])
                 subprocs.append(subproc)
 
 
@@ -189,6 +194,9 @@ def decoding(args):
                 if not isinstance(procs, int):
                     procs = 1
 
+                if cores * procs > cpu_count:
+                    cores = None # Don't set cpu affinity
+
                 # 1. First run to get throughput and telemetry
                 try:
                     outputs = run(
@@ -288,6 +296,8 @@ def decoding(args):
                     latency_stats = [0, 0, 0, 0, 0, 0]
 
 
+                if cores is None:
+                    cores = cpu_count
                 stats = [video_name, cores, procs, args.device, args.sync, codec, bitrate, resolution, avg_fps ] + latency_stats
                 benchmark_stats.append(stats)
 
