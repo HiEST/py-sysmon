@@ -100,7 +100,8 @@ def main():
         "{}/bin/lib".format(os.getcwd()),
         '{}/inference_engine/external/tbb/lib/'.format(openvino_path),
         '{}/inference_engine/lib/intel64/'.format(openvino_path),
-        '{}/ngraph/lib/'.format(openvino_path),
+        '{}/ngraph/lib/'.format(openvino_path)
+    ]
     os.environ['LD_LIBRARY_PATH'] = ':'.join(ld_paths)
 
     cpu_count = psutil.cpu_count(logical=False)
