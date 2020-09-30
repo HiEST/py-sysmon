@@ -93,9 +93,15 @@ def main():
         args.precision = "fp32*"
 
     # exec(open(args.source).read())
-    subprocess.Popen('source {}'.format(args.source), shell=True)
-    ld_path = Path(__file__).parent.absolute() / 'bin/lib'
-    os.environ['LD_LIBRARY_PATH'] = str(ld_path)
+    # subprocess.Popen('source {}'.format(args.source), shell=True)
+    # ld_path = Path(__file__).parent.absolute() / 'bin/lib'
+    openvino_path = "/opt/intel/openvino_2020.2.120/deployment_tools"
+    ld_paths = [
+        "{}/bin/lib".format(os.getcwd()),
+        '{}/inference_engine/external/tbb/lib/'.format(openvino_path),
+        '{}/inference_engine/lib/intel64/'.format(openvino_path),
+        '{}/ngraph/lib/'.format(openvino_path),
+    os.environ['LD_LIBRARY_PATH'] = ':'.join(ld_paths)
 
     cpu_count = psutil.cpu_count(logical=False)
 
@@ -173,8 +179,8 @@ def main():
     benchmark_metrics = ['Model', 'CPUs', 'streams', 'requests', 'batch_size', 'precision'] + benchmark_metrics
     df = pd.DataFrame(benchmark_stats, columns=benchmark_metrics)
 
-    if args.preffix:
-        output_file = args.output + '/' + args.preffix + '-'
+    if args.prefix:
+        output_file = args.output + '/' + args.prefix + '-'
     else:
         output_file = args.output + '/'
     
