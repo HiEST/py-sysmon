@@ -5,6 +5,7 @@ import argparse
 import logging
 import time
 import collections
+import xmltodict
 from threading import Thread
 
 import pandas as pd
@@ -15,6 +16,98 @@ import psutil
 
 # Power measurements from local RAPL interface 
 import rapl
+
+
+class NVMonitor:
+    def __init__(self):
+        self.thread = None
+        self.sampling = False
+        self.samples = []
+        self.result = None
+        self.avg = None
+        self.checkpoints = None
+        self.product_name = None
+
+    def start(self, interval=1.0, keep=False):
+        self.interval = interval
+        self.sampling = True
+
+        if not keep:
+            self.result = None
+            self.avg = None
+
+        self.thread = Thread(
+            target=self.nv_monitor, 
+            args=(self.interval,),
+            daemon=True)
+        
+        self.thread.start()
+
+    def nv_monitor(self, interval):
+        data = []
+        while self.sampling:
+            time.sleep(interval)
+            
+            p = subprocess.Popen(['nvidia-smi', '-q', '-x'], stdout=subprocess.PIPE)
+            out, error = p.communicate()
+
+            xml = dict(xmltodict.parse(out.decode('utf-8')))
+            xml = dict(xml['nvidia_smi_log'])
+
+            gpu = dict(xml['gpu'][0])
+
+            categories = ['utilization', 'power_readings', 'encoder_stats', 'temperature']
+
+            # add single metrics 
+            headers = ['timestamp', 'duration', 'fan_speed']
+            stats = [time.time(), interval, int(gpu['fan_speed'].split(' ')[0])]
+
+            self.product_name = gpu['product_name']
+            
+            for cat in categories:
+                for subcat, stat in gpu[cat].items():
+                    headers.append(subcat)
+                    s = gpu[cat][subcat].split(' ')[0]
+                    try:
+                        s = float(s)
+                    except ValueError:
+                        s = np.nan
+                        pass
+                    stats.append(s)
+
+            print(stats)
+            data.append(stats)
+            
+        self.result = pd.DataFrame(data, columns=headers)
+
+    def stop(self, checkpoint=True):
+        self.sampling = False
+        self.thread.join()
+
+        if checkpoint:
+            self.checkpoint()
+
+    def average(self):
+        if self.result is None:
+            logging.warning("Average cannot be computed while monitor is running. Please, call stop() first.")
+            return None
+
+        self.avg = pd.DataFrame(self.result.drop('timestamp', axis=1).mean().dropna()).T
+        self.avg.insert(0, 'product_name', self.product_name)
+        return self.avg
+
+    def to_csv(filename):
+        self.result.to_csv(filename, sep=',', index=False)
+    
+    def checkpoint(self):
+        self.avg = None
+        _ = self.average()
+
+        if self.checkpoints is None:
+            self.checkpoints = self.avg
+        else:
+            self.checkpoints = self.checkpoints.append(self.avg, ignore_index=True)
+
 
 class IPMIMonitor:
     def __init__(self):
@@ -132,7 +225,7 @@ class PCMMonitor:
 
     def pcm_monitor(self, interval):
         p = subprocess.Popen(
-            ['./utils/pcm.x', '-csv'],
+            ['/tf/workspace/py-sysmon/utils/pcm.x', '-csv'],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE
         )
