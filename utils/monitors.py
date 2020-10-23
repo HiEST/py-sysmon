@@ -15,7 +15,7 @@ import numpy as np
 import psutil
 
 # Power measurements from local RAPL interface 
-import rapl
+#import rapl
 
 
 class NVMonitor:
@@ -75,7 +75,6 @@ class NVMonitor:
                         pass
                     stats.append(s)
 
-            print(stats)
             data.append(stats)
             
         self.result = pd.DataFrame(data, columns=headers)
@@ -207,6 +206,94 @@ class IPMIMonitor:
             self.checkpoints = self.avg
         else:
             self.checkpoints = self.checkpoints.append(self.avg, ignore_index=True)
+
+class TurboStatMonitor:
+    def __init__(self):
+        self.sampling = False
+        self.process = None
+        self.result = None
+        self.avg = None
+        self.checkpoints = None
+        self.counters = ['PkgWatt', 'RAMWatt']
+
+    def start(self, interval=1.0):
+        self.interval = interval
+        self.turbostat_monitor(interval)
+        self.result = None
+        self.avg = None
+
+    def turbostat_monitor(self, interval):
+        cli = [
+            'turbostat',
+            '--show', ','.join(self.counters),
+            '--interval', str(interval),
+            '--Summary',
+        ]
+
+        p = subprocess.Popen(
+            cli,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        self.process = p
+        self.sampling = True
+
+    def stop(self, checkpoint=True):
+        os.kill(self.process.pid, signal.SIGTERM)
+        self.sampling = False
+
+        out, err = self.process.communicate()
+        samples = [sample for sample in out.decode('utf-8').split('\n')[1:] if sample != '']
+        if len(samples) > 2:
+            samples = samples[:-1]
+        if len(samples) > 2:
+            samples = samples[1:]
+
+
+        data = []
+        for sample in samples:
+            stats = sample.split('\t')
+            data.append(stats)
+
+        df = pd.DataFrame(data, columns=self.counters)
+        for col in df.columns:
+            try:
+                df[col] = pd.to_numeric(df[col])
+            except:
+                try:
+                    df[col] = pd.to_datetime(df[col])
+                except:
+                    print('{} impossible to determine'.format(col))
+
+        self.result = df
+
+        if checkpoint:
+            self.checkpoint()
+
+    def average(self, percpu=True):
+        if self.result is None:
+            logging.warning("Average cannot be computed while monitor is running. Please, call stop() first.")
+            return None
+
+        self.avg = pd.DataFrame(self.result.mean(numeric_only=True).dropna()).T
+
+        return self.avg
+
+    def to_csv(filename):
+        self.result.to_csv(filename, sep=',', index=False)
+
+    def checkpoint(self):
+        if self.sampling:
+            logging.warning("PCMMonitor can't be checkpointed while running. Please, call stop() first.")
+
+        self.avg = None
+        _ = self.average()
+
+        if self.checkpoints is None:
+            self.checkpoints = self.avg
+        else:
+            self.checkpoints = self.checkpoints.append(self.avg, ignore_index=True)
+
 
 
 class PCMMonitor:
