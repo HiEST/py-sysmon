@@ -153,9 +153,10 @@ def main():
                     '-nireq', str(nireq),
                     '-b', str(batch),
                     '-t', str(args.t)
-                ],
-                if args.dev not in ['MYRIAD', 'GPU']:
-                    args += ['-nstreams', str(nstreams)]
+                ]
+
+                if args.device not in ['MYRIAD', 'GPU']:
+                    cmd += ['-nstreams', str(nstreams)]
                  
                 subproc = subprocess.Popen(
                         cmd,

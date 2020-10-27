@@ -5,7 +5,7 @@ import argparse
 import logging
 import time
 import collections
-import xmltodict
+#import xmltodict
 from threading import Thread
 
 import pandas as pd
@@ -214,7 +214,7 @@ class TurboStatMonitor:
         self.result = None
         self.avg = None
         self.checkpoints = None
-        self.counters = ['PkgWatt', 'RAMWatt']
+        self.counters = ['PkgWatt', 'RAMWatt','Busy%']
 
     def start(self, interval=1.0):
         self.interval = interval
@@ -312,7 +312,7 @@ class PCMMonitor:
 
     def pcm_monitor(self, interval):
         p = subprocess.Popen(
-            ['/tf/workspace/py-sysmon/utils/pcm.x', '-csv'],
+            ['./utils/pcm.x', '-csv'],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE
         )
