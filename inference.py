@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from utils.monitors import ResourceMonitor, RAPLMonitor, PCMMonitor
+from utils.monitors import ResourceMonitor, TurboStatMonitor, PCMMonitor
 
 def main():
     parser = argparse.ArgumentParser()
@@ -95,7 +95,7 @@ def main():
     # exec(open(args.source).read())
     # subprocess.Popen('source {}'.format(args.source), shell=True)
     # ld_path = Path(__file__).parent.absolute() / 'bin/lib'
-    openvino_path = "/opt/intel/openvino_2020.2.120/deployment_tools"
+    openvino_path = "/opt/intel/openvino_2021/deployment_tools"
     ld_paths = [
         "{}/bin/lib".format(os.getcwd()),
         '{}/inference_engine/external/tbb/lib/'.format(openvino_path),
@@ -108,13 +108,16 @@ def main():
 
     if args.config is not None:
         configs = pd.read_csv(args.config)
+        configs.fillna(0, inplace=True)
+        for col in configs.columns:
+            configs[col] = configs[col].astype(int)
     else:
         default_config = [[cpu_count, 1, 1, 1]]
         configs = pd.DataFrame(default_config, columns=['cores', 'streams', 'requests', 'batch'])
 
     #System monitors
     cpu_monitor = ResourceMonitor()
-    rapl_monitor = RAPLMonitor()
+    rapl_monitor = TurboStatMonitor()
     pcm_monitor = PCMMonitor()
 
     proc = psutil.Process()
@@ -129,13 +132,13 @@ def main():
         for model in tqdm(models, desc='Models to run', total=len(models)):
             model_name = model.stem
             for _, cores, nstreams, nireq, batch in tqdm(configs.itertuples(), desc='Runs with {}'.format(model_name), total=configs_per_model, leave=False):
-                if not isinstance(cores, int):
+                if not cores:
                     cores = cpu_count
-                if not isinstance(nstreams, int):
+                if not nstreams:
                     nstreams = cpu_count
-                if not isinstance(nireq, int):
+                if not nireq:
                     nireq = nstreams
-                if not isinstance(batch, int):
+                if not batch:
                     batch = 1
 
                 proc.cpu_affinity(list(np.arange(0, cores)))
@@ -143,17 +146,21 @@ def main():
                 pcm_monitor.start(interval=1.0)
                 cpu_monitor.start(interval=1.0)
                 rapl_monitor.start(interval=1.0)
-
-                subproc = subprocess.Popen(
-                    [args.bin, 
+                cmd = [
+                    args.bin, 
                     '-m', str(model),
                     '-d', args.device,
-                    '-nstreams', str(nstreams),
                     '-nireq', str(nireq),
                     '-b', str(batch),
-                    '-t', str(args.t)],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE
+                    '-t', str(args.t)
+                ],
+                if args.dev not in ['MYRIAD', 'GPU']:
+                    args += ['-nstreams', str(nstreams)]
+                 
+                subproc = subprocess.Popen(
+                        cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE
                 )
 
                 out, err = subproc.communicate()
