@@ -72,10 +72,10 @@ def get_video_info(video):
 
     codec = video_info['streams'][0]['codec_name']
     resolution = video_info['streams'][0]['height']
-    duration = video_info['streams'][0]['duration']
+    duration = video_info['format']['duration']
     fr, div = video_info['streams'][0]['avg_frame_rate'].split('/')
     frame_rate = float(fr) / float(div)
-    bitrate = int(video_info['streams'][0]['bit_rate'])
+    bitrate = int(video_info['format']['bit_rate'])
     return [codec, resolution, duration, frame_rate, bitrate]
 
 
@@ -121,6 +121,8 @@ def benchmark_ffmpeg(video, configs, device, sync, timeout, monitors):
                                                                  procs, cores))
             continue
         except Exception as e:
+            print(out)
+            print(err)
             raise type(e)(f'{str(e)}\nFailed with pipeline: {ffmpeg_cli}')
 
         for line in err.split('\n'):
