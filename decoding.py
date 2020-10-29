@@ -38,7 +38,12 @@ def run(cmdline, monitors, timeout=None, retries=5):
                 stderr=subprocess.PIPE
             )
 
-            out, err = subproc.communicate(timeout=timeout)
+            try:
+                out, err = subproc.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                subproc.kill()
+                out, err = subproc.communicate()
+
             out = out.decode('utf-8')
             err = err.decode('utf-8')
 
@@ -121,8 +126,6 @@ def benchmark_ffmpeg(video, configs, device, sync, timeout, monitors):
                                                                  procs, cores))
             continue
         except Exception as e:
-            print(out)
-            print(err)
             raise type(e)(f'{str(e)}\nFailed with pipeline: {ffmpeg_cli}')
 
         for line in err.split('\n'):
