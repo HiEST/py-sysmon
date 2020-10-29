@@ -97,6 +97,7 @@ def benchmark_ffmpeg(video, configs, device, sync, timeout, monitors):
     configs_per_video = len(configs)
 
     proc = psutil.Process()
+    all_stats = []
     for _, cores, procs in tqdm(configs.itertuples(),
                                 desc='Runs with {}'.format(video_name),
                                 total=configs_per_video, leave=False):
@@ -157,7 +158,9 @@ def benchmark_ffmpeg(video, configs, device, sync, timeout, monitors):
         stats = [video_name, cores, procs, device,
                  sync, codec, bitrate, resolution,
                  decoding_fps] + latency_stats
-        return stats
+
+        all_stats.append(stats) 
+    return all_stats
 
 
 def benchmark_gst(video, configs, device, sync,
@@ -184,6 +187,7 @@ def benchmark_gst(video, configs, device, sync,
     configs_per_video = len(configs)
 
     proc = psutil.Process()
+    all_stats = []
     for _, cores, procs in tqdm(configs.itertuples(),
                                 desc='Runs with {}'.format(video_name),
                                 total=configs_per_video, leave=False):
@@ -253,7 +257,8 @@ def benchmark_gst(video, configs, device, sync,
         stats = [video_name, cores, procs, device,
                  sync, codec, bitrate, resolution,
                  decoding_fps] + latency_stats
-        return stats
+        all_stats.append(stats)
+    return all_stats
 
 
 def parse_arguments(parser):
@@ -412,7 +417,7 @@ def main():
                           sep=',', index=False, float_format='%.3f')
                 raise
 
-            benchmark_stats.append(stats)
+            benchmark_stats.extend(stats)
             pbar.update(1)
 
     df = pd.DataFrame(benchmark_stats, columns=benchmark_metrics)
