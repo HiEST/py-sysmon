@@ -12,7 +12,7 @@ import pandas as pd
 import psutil
 from tqdm import tqdm
 
-from utils.monitors import PCMMonitor, TurboStatMonitor, ResourceMonitor
+from utils.monitors import PCMMonitor, TurboStatMonitor, ResourceMonitor, NVMonitor
 
 MIN_RUNTIME = 5
 
@@ -317,6 +317,12 @@ def parse_arguments(parser):
         default=False,
         action='store_true'
     )
+    parser.add_argument(
+        "--monitor-nvidia",
+        help="Enable nvidia monitor.",
+        default=False,
+        action='store_true'
+    )
 
     args = parser.parse_args()
     return args
@@ -358,6 +364,9 @@ def main():
     turbo_monitor = TurboStatMonitor()
     pcm_monitor = PCMMonitor()
     monitors = [cpu_monitor, turbo_monitor, pcm_monitor]
+    if args.monitor_nvidia:
+        nv_monitor = NVMonitor()
+        monitors.append(nv_monitor)
 
     benchmark_stats = []
     benchmark_metrics = ['Video', 'CPUs', 'Procs', 'Device', 'Sync',
@@ -388,11 +397,16 @@ def main():
                                   columns=benchmark_metrics)
                 df.to_csv('{}summary.csv.bak'.format(output_file),
                           sep=',', index=False, float_format='%.3f')
+
                 df = pd.concat([df,
                                 cpu_monitor.checkpoints,
                                 turbo_monitor.checkpoints,
                                 pcm_monitor.checkpoints],
                                axis=1, sort=False)
+                if args.monitor_nvidia:
+                    df = pd.concat([df,
+                                    nv_monitor.checkpoints])
+
                 df.to_csv('{}detailed.csv.bak'.format(output_file),
                           sep=',', index=False, float_format='%.3f')
                 raise
@@ -409,6 +423,9 @@ def main():
                     turbo_monitor.checkpoints,
                     pcm_monitor.checkpoints],
                    axis=1, sort=False)
+    if args.monitor_nvidia:
+        df = pd.concat([df, nv_monitor.checkpoints])
+
     df.to_csv('{}detailed.csv'.format(output_file),
               sep=',', index=False, float_format='%.3f')
 
