@@ -1,21 +1,28 @@
-import subprocess
+import logging
 import os
 import signal
-import argparse
-import logging
+import subprocess
 import time
-import collections
-#import xmltodict
+
+try:
+    import xmltodict
+except ModuleNotFoundError:
+    print('[WARNING] Module \'xmltodict\' not found. '
+          'Required only for the NVMonitor class')
+
 from threading import Thread
 
-import pandas as pd
 import numpy as np
-
+import pandas as pd
 # Utilization data
 import psutil
 
-# Power measurements from local RAPL interface 
-#import rapl
+# Power measurements from local RAPL interface
+try:
+    import rapl
+except ModuleNotFoundError:
+    print('[WARNING] Module \'rapl\' not found. '
+          'Required only for the RAPLMonitor class')
 
 
 class NVMonitor:
@@ -37,18 +44,19 @@ class NVMonitor:
             self.avg = None
 
         self.thread = Thread(
-            target=self.nv_monitor, 
+            target=self.nv_monitor,
             args=(self.interval,),
             daemon=True)
-        
+
         self.thread.start()
 
     def nv_monitor(self, interval):
         data = []
         while self.sampling:
             time.sleep(interval)
-            
-            p = subprocess.Popen(['nvidia-smi', '-q', '-x'], stdout=subprocess.PIPE)
+
+            p = subprocess.Popen(['nvidia-smi', '-q', '-x'],
+                                 stdout=subprocess.PIPE)
             out, error = p.communicate()
 
             xml = dict(xmltodict.parse(out.decode('utf-8')))
@@ -56,14 +64,16 @@ class NVMonitor:
 
             gpu = dict(xml['gpu'][0])
 
-            categories = ['utilization', 'power_readings', 'encoder_stats', 'temperature']
+            categories = ['utilization', 'power_readings',
+                          'encoder_stats', 'temperature']
 
-            # add single metrics 
+            # add single metrics
             headers = ['timestamp', 'duration', 'fan_speed']
-            stats = [time.time(), interval, int(gpu['fan_speed'].split(' ')[0])]
+            stats = [time.time(), interval,
+                     int(gpu['fan_speed'].split(' ')[0])]
 
             self.product_name = gpu['product_name']
-            
+
             for cat in categories:
                 for subcat, stat in gpu[cat].items():
                     headers.append(subcat)
@@ -76,7 +86,7 @@ class NVMonitor:
                     stats.append(s)
 
             data.append(stats)
-            
+
         self.result = pd.DataFrame(data, columns=headers)
 
     def stop(self, checkpoint=True):
@@ -88,16 +98,18 @@ class NVMonitor:
 
     def average(self):
         if self.result is None:
-            logging.warning("Average cannot be computed while monitor is running. Please, call stop() first.")
+            logging.warning("Average cannot be computed while "
+                            "monitor is running. Please, call stop() first.")
             return None
 
-        self.avg = pd.DataFrame(self.result.drop('timestamp', axis=1).mean().dropna()).T
+        self.avg = pd.DataFrame(self.result.drop('timestamp',
+                                                 axis=1).mean().dropna()).T
         self.avg.insert(0, 'product_name', self.product_name)
         return self.avg
 
-    def to_csv(filename):
+    def to_csv(self, filename):
         self.result.to_csv(filename, sep=',', index=False)
-    
+
     def checkpoint(self):
         self.avg = None
         _ = self.average()
@@ -105,7 +117,8 @@ class NVMonitor:
         if self.checkpoints is None:
             self.checkpoints = self.avg
         else:
-            self.checkpoints = self.checkpoints.append(self.avg, ignore_index=True)
+            self.checkpoints = self.checkpoints.append(self.avg,
+                                                       ignore_index=True)
 
 
 class IPMIMonitor:
@@ -126,10 +139,10 @@ class IPMIMonitor:
             self.avg = None
 
         self.thread = Thread(
-            target=self.ipmi_monitor, 
+            target=self.ipmi_monitor,
             args=(self.interval, full),
             daemon=True)
-        
+
         self.thread.start()
 
     def get_full_ipmi_data(self, output):
@@ -138,26 +151,26 @@ class IPMIMonitor:
         for row in output.split('\n'):
             if 'discrete' in row:
                 continue
-            sensor, value, unit = [field.strip() for field in row.split('|')[:3]]
+            sensor, value, unit = [
+                field.strip()
+                for field in row.split('|')[:3]]
             data.append([timestamp, sensor, value, unit])
-    
+
         return data
 
     def get_power_ipmi_data(self, reading):
         data = []
         timestamp = time.time()
-        for row in output.split('\n'):
-            if not 'Instantaneous' in row:
+        for row in reading.split('\n'):
+            if 'Instantaneous' not in row:
                 continue
-            
+
             value, unit = row.split(':')[1].strip().split(' ')
             data.append([timestamp, value, unit])
 
         return data
 
     def get_ipmi_data(self, full=False):
-        data = []
-        
         if full:
             opts = ['sensor']
         else:
@@ -169,20 +182,20 @@ class IPMIMonitor:
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE)
-        
+
         out, err = proc.communicate()
 
         if full:
             return self.get_full_ipmi_data(out.decode('utf-8'))
-            
+
         return self.get_power_ipmi_data(out.decode('utf-8'))
 
     def ipmi_monitor(self, interval, full=False):
         data = []
         while self.sampling:
             time.sleep(interval)
-            
-            sample = get_ipmi_data()
+
+            sample = self.get_ipmi_data()
             data.append(sample)
 
         if full:
@@ -194,8 +207,8 @@ class IPMIMonitor:
     def stop(self):
         self.sampling = False
         self.thread.join()
-    
-    def to_csv(filename):
+
+    def to_csv(self, filename):
         self.result.to_csv(filename, sep=',', index=False)
 
     def checkpoint(self):
@@ -205,7 +218,9 @@ class IPMIMonitor:
         if self.checkpoints is None:
             self.checkpoints = self.avg
         else:
-            self.checkpoints = self.checkpoints.append(self.avg, ignore_index=True)
+            self.checkpoints = self.checkpoints.append(self.avg,
+                                                       ignore_index=True)
+
 
 class TurboStatMonitor:
     def __init__(self):
@@ -214,7 +229,7 @@ class TurboStatMonitor:
         self.result = None
         self.avg = None
         self.checkpoints = None
-        self.counters = ['PkgWatt', 'RAMWatt','Busy%']
+        self.counters = ['PkgWatt', 'RAMWatt', 'Busy%']
 
     def start(self, interval=1.0):
         self.interval = interval
@@ -243,12 +258,13 @@ class TurboStatMonitor:
         self.sampling = False
 
         out, err = self.process.communicate()
-        samples = [sample for sample in out.decode('utf-8').split('\n')[1:] if sample != '']
+        samples = [sample
+                   for sample in out.decode('utf-8').split('\n')[1:]
+                   if sample != '']
         if len(samples) > 2:
             samples = samples[:-1]
         if len(samples) > 2:
             samples = samples[1:]
-
 
         data = []
         for sample in samples:
@@ -259,10 +275,10 @@ class TurboStatMonitor:
         for col in df.columns:
             try:
                 df[col] = pd.to_numeric(df[col])
-            except:
+            except Exception:
                 try:
                     df[col] = pd.to_datetime(df[col])
-                except:
+                except Exception:
                     print('{} impossible to determine'.format(col))
 
         self.result = df
@@ -272,19 +288,21 @@ class TurboStatMonitor:
 
     def average(self, percpu=True):
         if self.result is None:
-            logging.warning("Average cannot be computed while monitor is running. Please, call stop() first.")
+            logging.warning("Average cannot be computed while monitor "
+                            "is running. Please, call stop() first.")
             return None
 
         self.avg = pd.DataFrame(self.result.mean(numeric_only=True).dropna()).T
 
         return self.avg
 
-    def to_csv(filename):
+    def to_csv(self, filename):
         self.result.to_csv(filename, sep=',', index=False)
 
     def checkpoint(self):
         if self.sampling:
-            logging.warning("PCMMonitor can't be checkpointed while running. Please, call stop() first.")
+            logging.warning("PCMMonitor can't be checkpointed while "
+                            "running. Please, call stop() first.")
 
         self.avg = None
         _ = self.average()
@@ -292,8 +310,8 @@ class TurboStatMonitor:
         if self.checkpoints is None:
             self.checkpoints = self.avg
         else:
-            self.checkpoints = self.checkpoints.append(self.avg, ignore_index=True)
-
+            self.checkpoints = self.checkpoints.append(self.avg,
+                                                       ignore_index=True)
 
 
 class PCMMonitor:
@@ -328,7 +346,8 @@ class PCMMonitor:
 
         headers = []
         prev_level = ""
-        for level,metric in zip(stats[0].split(','), stats[1].split(',')):
+        for level, metric in zip(stats[0].split(','),
+                                 stats[1].split(',')):
             if level != "":
                 prev_level = level
 
@@ -337,7 +356,7 @@ class PCMMonitor:
                 prev_level = prev_level.replace(')', '')
             header = '{}-{}'.format(prev_level, metric)
             headers.append(header)
-            
+
         data = []
         for sample in stats[2:]:
             data.append(sample.split(','))
@@ -346,10 +365,10 @@ class PCMMonitor:
         for col in df.columns:
             try:
                 df[col] = pd.to_numeric(df[col])
-            except:
+            except Exception:
                 try:
                     df[col] = pd.to_datetime(df[col])
-                except:
+                except Exception:
                     print('{} impossible to determine'.format(col))
 
         self.result = df
@@ -366,7 +385,7 @@ class PCMMonitor:
 
         return self.avg
 
-    def to_csv(filename):
+    def to_csv(self, filename):
         self.result.to_csv(filename, sep=',', index=False)
 
     def checkpoint(self):
@@ -452,7 +471,7 @@ class RAPLMonitor:
         self.avg = pd.DataFrame(self.result.drop('timestamp', axis=1).mean().dropna()).T
         return self.avg
 
-    def to_csv(filename):
+    def to_csv(self, filename):
         self.result.to_csv(filename, sep=',', index=False)
     
     def checkpoint(self):
@@ -525,6 +544,19 @@ class ResourceMonitor:
 
         return headers
 
+    def get_mem_stats(self):
+        mem = psutil.virtual_memory()
+        stats = [
+            mem.total, mem.used, mem.available, 
+            mem.shared, mem.cached, mem.buffers, mem.percent
+        ]
+        return stats
+
+    def get_mem_headers(self):
+        headers = ['total', 'used', 'avail',
+                   'shared', 'cached', 'buffers', 'percent']
+        return headers
+
     def get_sensors_stats(self):
         if hasattr(psutil, "sensors_temperatures"):
             temps = psutil.sensors_temperatures()
@@ -546,7 +578,6 @@ class ResourceMonitor:
         # Temperatures.
         temp_sensors = []
         for name in temps.keys():
-            temp_name = 'temp_{}'.format(name)
             # temp_sensors.append(name)
             for entry in temps[name]:
                 for field in entry._fields:
@@ -555,7 +586,6 @@ class ResourceMonitor:
         # Fans.
         fan_sensors = []
         for name in fans.keys():
-            fan_name = 'fan_{}'.format(name)
             # fan_sensors.append(name)
             for entry in fans[name]:
                 for field in entry._fields:
@@ -616,7 +646,8 @@ class ResourceMonitor:
     def monitor_resources(self, interval):
         data = []
         data_sensors = []
-        _ = self.get_cpu_stats() # First reading must be discarded
+        _ = self.get_cpu_stats()  # First reading must be discarded
+        _ = self.get_mem_stats()
         
         if self.get_sensors:
             _ = self.get_sensors_stats()
@@ -675,7 +706,7 @@ class ResourceMonitor:
 
         return self.avg
         
-    def to_csv(filename):
+    def to_csv(self, filename):
         self.result.to_csv(filename, sep=',', index=False)
 
     def checkpoint(self):
@@ -687,88 +718,11 @@ class ResourceMonitor:
         else:
             self.checkpoints = self.checkpoints.append(self.avg, ignore_index=True)
 
-def setup():
-    logging.basicConfig(format='%(levelname)s:%(message)s', level=logging.DEBUG)
+    def setup():
+        logging.basicConfig(format='%(levelname)s:%(message)s', level=logging.DEBUG)
 
-def check():
-    thread_count = psutil.cpu_count(logical=True)
-    cpu_count = psutil.cpu_count(logical=False)
-    if cpu_count < thread_count:
-        logging.warning("Hyper-Threading is ENABLED.")
-
-
-
-def get_mem_stats():
-    virtual_memory = psutil.virtual_memory()
-    print(virtual_memory)
-
-def get_sensors_stats():
-        if hasattr(psutil, "sensors_temperatures"):
-            temps = psutil.sensors_temperatures()
-        else:
-            temps = {}
-        if hasattr(psutil, "sensors_fans"):
-            fans = psutil.sensors_fans()
-        else:
-            fans = {}
-        if hasattr(psutil, "sensors_battery"):
-            battery = psutil.sensors_battery()
-        else:
-            battery = None
-
-        if not any((temps, fans, battery)):
-            print("can't read any temperature, fans or battery info")
-            return
-
-        names = set(list(temps.keys()) + list(fans.keys()))
-        for name in names:
-            print(name)
-            # Temperatures.
-            if name in temps:
-                print("    Temperatures:")
-                for entry in temps[name]:
-                    print("        %-20s %s°C (high=%s°C, critical=%s°C)" % (
-                        entry.label or name, entry.current, entry.high,
-                        entry.critical))
-            # Fans.
-            if name in fans:
-                print("    Fans:")
-                for entry in fans[name]:
-                    print("        %-20s %s RPM" % (
-                        entry.label or name, entry.current))
-
-        # Battery.
-        if battery:
-            print("Battery:")
-            print("    charge:     %s%%" % round(battery.percent, 2))
-            if battery.power_plugged:
-                print("    status:     %s" % (
-                    "charging" if battery.percent < 100 else "fully charged"))
-                print("    plugged in: yes")
-            else:
-                print("    left:       %s" % secs2hours(battery.secsleft))
-                print("    status:     %s" % "discharging")
-                print("    plugged in: no")
-
-
-def do_something():
-    time.sleep(1)
-
-def main():
-    setup()
-    check()
-
-    
-    # do_something()
-    # get_cpu_stats()
-    get_mem_stats()
-    get_sensors_stats()
-
-    # meter.end()
-    # print(report.data.head())
-    # print(meter.result)
-
-
-
-if __name__ == '__main__':
-    main()
+    def check():
+        thread_count = psutil.cpu_count(logical=True)
+        cpu_count = psutil.cpu_count(logical=False)
+        if cpu_count < thread_count:
+            logging.warning("Hyper-Threading is ENABLED.")
