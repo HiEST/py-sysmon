@@ -57,7 +57,7 @@ class NVMonitor:
 
             p = subprocess.Popen(['nvidia-smi', '-q', '-x'],
                                  stdout=subprocess.PIPE)
-            out, error = p.communicate()
+            out, _ = p.communicate()
 
             xml = dict(xmltodict.parse(out.decode('utf-8')))
             xml = dict(xml['nvidia_smi_log'])
@@ -257,7 +257,7 @@ class TurboStatMonitor:
         os.kill(self.process.pid, signal.SIGTERM)
         self.sampling = False
 
-        out, err = self.process.communicate()
+        out, _ = self.process.communicate()
         samples = [sample
                    for sample in out.decode('utf-8').split('\n')[1:]
                    if sample != '']
@@ -378,7 +378,8 @@ class PCMMonitor:
 
     def average(self, percpu=True):
         if self.result is None:
-            logging.warning("Average cannot be computed while monitor is running. Please, call stop() first.")
+            logging.warning("Average cannot be computed while monitor "
+                            "is running. Please, call stop() first.")
             return None
 
         self.avg = pd.DataFrame(self.result.mean(numeric_only=True).dropna()).T
@@ -390,7 +391,8 @@ class PCMMonitor:
 
     def checkpoint(self):
         if self.sampling:
-            logging.warning("PCMMonitor can't be checkpointed while running. Please, call stop() first.")
+            logging.warning("PCMMonitor can't be checkpointed while "
+                            "running. Please, call stop() first.")
 
         self.avg = None
         _ = self.average()
@@ -398,7 +400,8 @@ class PCMMonitor:
         if self.checkpoints is None:
             self.checkpoints = self.avg
         else:
-            self.checkpoints = self.checkpoints.append(self.avg, ignore_index=True)
+            self.checkpoints = self.checkpoints.append(self.avg,
+                                                       ignore_index=True)
 
 
 class RAPLMonitor:
@@ -420,10 +423,10 @@ class RAPLMonitor:
             self.avg = None
 
         self.thread = Thread(
-            target=self.rapl_monitor, 
+            target=self.rapl_monitor,
             args=(self.interval,),
             daemon=True)
-        
+
         self.thread.start()
 
     def get_sample_data(self, diff):
@@ -432,8 +435,9 @@ class RAPLMonitor:
         for domain in diff.domains:
             data.append(diff.domains[domain].values['energy_uj'])
             for sd in diff.domains[domain].subdomains:
-                data.append(diff.domains[domain].subdomains[sd].values['energy_uj'])
-        
+                data.append(diff.domains[domain]
+                            .subdomains[sd].values['energy_uj'])
+
         return data
 
     def rapl_monitor(self, interval):
@@ -441,11 +445,11 @@ class RAPLMonitor:
         data = []
         while self.sampling:
             time.sleep(interval)
-            
+
             cur_sample = rapl.RAPLMonitor.sample()
             diff = cur_sample - prev_sample
             prev_sample = cur_sample
-            
+
             sample_data = self.get_sample_data(diff)
             data.append(sample_data)
 
@@ -465,15 +469,17 @@ class RAPLMonitor:
 
     def average(self):
         if self.result is None:
-            logging.warning("Average cannot be computed while monitor is running. Please, call stop() first.")
+            logging.warning("Average cannot be computed while monitor "
+                            "is running. Please, call stop() first.")
             return None
 
-        self.avg = pd.DataFrame(self.result.drop('timestamp', axis=1).mean().dropna()).T
+        self.avg = pd.DataFrame(self.result.drop('timestamp',
+                                                 axis=1).mean().dropna()).T
         return self.avg
 
     def to_csv(self, filename):
         self.result.to_csv(filename, sep=',', index=False)
-    
+
     def checkpoint(self):
         self.avg = None
         _ = self.average()
@@ -481,7 +487,8 @@ class RAPLMonitor:
         if self.checkpoints is None:
             self.checkpoints = self.avg
         else:
-            self.checkpoints = self.checkpoints.append(self.avg, ignore_index=True)
+            self.checkpoints = self.checkpoints.append(self.avg,
+                                                       ignore_index=True)
 
 
 class ResourceMonitor:
@@ -502,30 +509,29 @@ class ResourceMonitor:
         self.avg = None
 
         self.thread = Thread(
-            target=self.monitor_resources, 
+            target=self.monitor_resources,
             args=(self.interval,),
             daemon=True)
-        
+
         self.thread.start()
 
     def get_cpu_stats(self):
         data = []
         timestamp = time.time()
-        
+
         cpu_utils = psutil.cpu_percent(percpu=True)
         cpu_times = psutil.cpu_times_percent(percpu=True)
         cpu_freqs = psutil.cpu_freq(percpu=True)
 
         for cpu_id in range(self.cpu_count):
             data_cpu = [
-                timestamp, 
-                cpu_id, 
+                timestamp,
+                cpu_id,
                 cpu_utils[cpu_id]
             ]
 
             data_cpu += list(cpu_times[cpu_id])
             data_cpu += list(cpu_freqs[cpu_id])
-        
             data.append(data_cpu)
 
         return data
@@ -547,7 +553,7 @@ class ResourceMonitor:
     def get_mem_stats(self):
         mem = psutil.virtual_memory()
         stats = [
-            mem.total, mem.used, mem.available, 
+            mem.total, mem.used, mem.available,
             mem.shared, mem.cached, mem.buffers, mem.percent
         ]
         return stats
@@ -572,7 +578,7 @@ class ResourceMonitor:
             battery = None
 
         if not any((temps, fans, battery)):
-            logger.warning("can't read any temperature, fans or battery info")
+            logging.warning("can't read any temperature, fans or battery info")
             return
 
         # Temperatures.
@@ -582,7 +588,7 @@ class ResourceMonitor:
             for entry in temps[name]:
                 for field in entry._fields:
                     temp_sensors.append(getattr(entry, field))
-        
+
         # Fans.
         fan_sensors = []
         for name in fans.keys():
@@ -590,13 +596,14 @@ class ResourceMonitor:
             for entry in fans[name]:
                 for field in entry._fields:
                     fan_sensors.append(getattr(entry, field))
-        
+
         # Battery.
         battery_sensors = []
         if battery:
             battery_sensors = [battery.power_plugged]
-        
-        all_sensors = [time.time()] + temp_sensors + fan_sensors + battery_sensors
+
+        all_sensors = [time.time()] + temp_sensors +\
+            fan_sensors + battery_sensors
         return all_sensors
 
     def get_sensors_headers(self):
@@ -614,7 +621,7 @@ class ResourceMonitor:
             battery = None
 
         if not any((temps, fans, battery)):
-            logger.warning("can't read any temperature, fans or battery info")
+            logging.warning("can't read any temperature, fans or battery info")
             return
 
         # Temperatures.
@@ -625,7 +632,7 @@ class ResourceMonitor:
             for i, entry in enumerate(temps[name]):
                 for field in entry._fields:
                     temp_sensors.append(f'{temp_name}_{i}.{field}')
-        
+
         # Fans.
         fan_sensors = []
         for name in fans.keys():
@@ -634,13 +641,14 @@ class ResourceMonitor:
             for i, entry in enumerate(fans[name]):
                 for field in entry._fields:
                     fan_sensors.append(f'{fan_name}_{i}.{field}')
-        
+
         # Battery.
         battery_sensors = []
         if battery:
             battery_sensors = ['battery.power_plugged']
-        
-        all_sensors = ['timestamp'] + temp_sensors + fan_sensors + battery_sensors
+
+        all_sensors = ['timestamp'] + temp_sensors +\
+            fan_sensors + battery_sensors
         return all_sensors
 
     def monitor_resources(self, interval):
@@ -648,13 +656,13 @@ class ResourceMonitor:
         data_sensors = []
         _ = self.get_cpu_stats()  # First reading must be discarded
         _ = self.get_mem_stats()
-        
+
         if self.get_sensors:
             _ = self.get_sensors_stats()
-        
+
         while self.sampling:
             time.sleep(interval)
-            
+
             sample_data = self.get_cpu_stats()
             data += sample_data
 
@@ -662,7 +670,7 @@ class ResourceMonitor:
                 sample_data = self.get_sensors_stats()
                 data_sensors += sample_data
 
-        columns = self.get_cpu_headers()    
+        columns = self.get_cpu_headers()
         self.result = pd.DataFrame(data, columns=columns)
 
         if self.get_sensors:
@@ -670,7 +678,7 @@ class ResourceMonitor:
             self.result_sensors = pd.DataFrame(data_sensors, columns=columns)
 
     def stop(self, checkpoint=True):
-        self.sampling = False   
+        self.sampling = False
         self.thread.join()
 
         if checkpoint:
@@ -678,7 +686,8 @@ class ResourceMonitor:
 
     def average(self, percpu=True):
         if self.result is None:
-            logging.warning("Average cannot be computed while monitor is running. Please, call stop() first.")
+            logging.warning("Average cannot be computed while "
+                            "monitor is running. Please, call stop() first.")
             return None
 
         avg = self.result
@@ -689,11 +698,11 @@ class ResourceMonitor:
         headers = list('pkg_' + pkg_avg.columns.values)
         pkg_avg = pkg_avg.mean().values.tolist()
         self.avg = pd.DataFrame([pkg_avg], columns=headers)
-        
+
         if percpu:
             cpus = self.result.cpu_id.unique()
             avg_data = []
-            
+
             for cpu in cpus:
                 avg_cpu = self.result[self.result.cpu_id == cpu]
                 avg_cpu = avg_cpu.drop(['timestamp', 'cpu_id'], axis=1)
@@ -705,7 +714,7 @@ class ResourceMonitor:
             self.avg = pd.DataFrame([data], columns=headers)
 
         return self.avg
-        
+
     def to_csv(self, filename):
         self.result.to_csv(filename, sep=',', index=False)
 
@@ -716,13 +725,17 @@ class ResourceMonitor:
         if self.checkpoints is None:
             self.checkpoints = self.avg
         else:
-            self.checkpoints = self.checkpoints.append(self.avg, ignore_index=True)
+            self.checkpoints = self.checkpoints.append(self.avg,
+                                                       ignore_index=True)
 
-    def setup():
-        logging.basicConfig(format='%(levelname)s:%(message)s', level=logging.DEBUG)
 
-    def check():
-        thread_count = psutil.cpu_count(logical=True)
-        cpu_count = psutil.cpu_count(logical=False)
-        if cpu_count < thread_count:
-            logging.warning("Hyper-Threading is ENABLED.")
+def setup():
+    logging.basicConfig(format='%(levelname)s:%(message)s',
+                        level=logging.DEBUG)
+
+
+def check():
+    thread_count = psutil.cpu_count(logical=True)
+    cpu_count = psutil.cpu_count(logical=False)
+    if cpu_count < thread_count:
+        logging.warning("Hyper-Threading is ENABLED.")
