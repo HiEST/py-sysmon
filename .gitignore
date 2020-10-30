@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Neomake temp files
+.*@neomake_*
+
 # C extensions
 *.so
 
