@@ -130,7 +130,6 @@ def benchmark_ffmpeg(video, configs, device, sync, timeout, monitors):
 
         for line in err.split('\n'):
             if 'fps=' in line:
-                print('fps= in line')
                 all_fps = []
                 for subline in line.split('\r'):
                     metrics = subline.strip().split(' ')
@@ -154,7 +153,6 @@ def benchmark_ffmpeg(video, configs, device, sync, timeout, monitors):
                                         "format (not fp=x)")
                     all_fps.append(fps)
 
-                print(all_fps)
                 fps = sum(all_fps)/len(all_fps)
 
         decoding_fps = fps
