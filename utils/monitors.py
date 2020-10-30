@@ -229,7 +229,7 @@ class TurboStatMonitor:
         self.result = None
         self.avg = None
         self.checkpoints = None
-        self.counters = ['PkgWatt', 'RAMWatt', 'Busy%']
+        self.counters = ['PkgWatt', 'RAMWatt', 'Avg_MHz', 'Bzy_MHz', 'Busy%']
 
     def start(self, interval=1.0):
         self.interval = interval
