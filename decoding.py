@@ -129,24 +129,32 @@ def benchmark_ffmpeg(video, configs, device, sync, timeout, monitors):
             raise type(e)(f'{str(e)}\nFailed with pipeline: {ffmpeg_cli}')
 
         for line in err.split('\n'):
-            # if 'Execution ended after' in line:
-            #     runtime = line.split(' ')[-1]
-            #     hours, minutes, seconds = runtime.split(':')
-            #     runtime = int(hours)*3600 + int(minutes)*60 + float(seconds)
             if 'fps=' in line:
+                print('fps= in line')
                 all_fps = []
                 for subline in line.split('\r'):
                     metrics = subline.strip().split(' ')
+                    fps = 0
                     for m in metrics:
                         if 'fps' in m:
                             fps = m.split('=')[1]
-                            try:
-                                fps = float(fps)
-                            except Exception:
-                                raise Exception("fps metric wrong "
-                                                "format (not fp=x)")
-                            all_fps.append(fps)
+                            if fps == '':
+                                continue
+                            break
+                        elif fps == '':
+                            fps = m
+                            break
 
+                    try:
+                        fps = float(fps)
+                        if fps == 0.0:
+                            continue
+                    except Exception:
+                        raise Exception("fps metric wrong "
+                                        "format (not fp=x)")
+                    all_fps.append(fps)
+
+                print(all_fps)
                 fps = sum(all_fps)/len(all_fps)
 
         decoding_fps = fps
