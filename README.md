@@ -30,7 +30,7 @@ Py-SysMon supports different interfaces for gathering system statistics. Check o
 If you use py-sysmon for your research please cite our [preprint](https://www.arxiv.org/to-be-submitted): 
 
 > Daniel Rivas-Barragan, Francesc Guim-Bernat, Jordà Polo, and David Carrera (2020).
-Performance considerations for accelerating video analytics on the edge cloud. *arXiv* 2020.tbd; https://doi.org/tbd
+Performance Characterization of Video Analytics Workloads in Heterogenous Edge Infrastructures. *arXiv* 2020.tbd; https://doi.org/tbd
 
 ## Applications
 Py-SysMon can be applied for different applications:
@@ -66,11 +66,11 @@ The most recent code can be installed from the source on [GitHub](https://github
 python -m pip install git+https://github.com/danirivas/py-sysmon.git
 ```
 
-For developers, the repository can be cloned from [GitHub](https://github.com/danirivas/py-sysmon) and installed in
+For developers, the repository can be cloned from [GitHub](https://github.com/HiEST/py-sysmon) and installed in
 editable mode with:
 
 ```python
-git clone https://github.com/danirivas/py-sysmon.git
+git clone https://github.com/HiEST/py-sysmon.git
 cd py-sysmon
 python -m pip install -e .
 ```
