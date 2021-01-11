@@ -60,7 +60,7 @@ The latest stable code can be installed from [PyPI](https://pypi.python.org/pypi
 python -m pip install py-sysmon
 ```
 
-The most recent code can be installed from the source on [GitHub](https://github.com/danirivas/py-sysmon) with:
+The most recent code can be installed from the source on [GitHub](https://github.com/HiEST/py-sysmon) with:
 
 ```python
 python -m pip install git+https://github.com/danirivas/py-sysmon.git
